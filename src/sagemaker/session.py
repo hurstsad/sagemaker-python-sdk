@@ -2796,6 +2796,11 @@ class Session(object):  # pylint: disable=too-many-public-methods
             self.boto_session, description, job="AutoML"
         )
 
+        if not _has_log_group_permissions(client, log_group):
+            if wait:
+                return self.wait_for_auto_ml_job(job_name)
+            return
+
         state = _get_initial_job_state(description, "AutoMLJobStatus", wait)
 
         # The loop below implements a state machine that alternates between checking the job status
@@ -6036,6 +6041,11 @@ class Session(object):  # pylint: disable=too-many-public-methods
             self.boto_session, description, job="Processing"
         )
 
+        if not _has_log_group_permissions(client, log_group):
+            if wait:
+                return self.wait_for_processing_job(job_name)
+            return
+
         state = _get_initial_job_state(description, "ProcessingJobStatus", wait)
 
         # The loop below implements a state machine that alternates between checking the job status
@@ -6116,6 +6126,11 @@ class Session(object):  # pylint: disable=too-many-public-methods
         instance_count, stream_names, positions, client, log_group, dot, color_wrap = _logs_init(
             self.boto_session, description, job="Transform"
         )
+
+        if not _has_log_group_permissions(client, log_group):
+            if wait:
+                return self.wait_for_transform_job(job_name)
+            return
 
         state = _get_initial_job_state(description, "TransformJobStatus", wait)
 
@@ -8262,6 +8277,13 @@ def _display_inference_recommendations_job_steps_status(
     log_group_name = "/aws/sagemaker/InferenceRecommendationsJobs"
     log_stream_name = job_name + "/execution"
 
+    if not _has_log_group_permissions(cloudwatch_client, log_group_name):
+        _wait_until(
+            lambda: _describe_inference_recommendations_job_status(sagemaker_client, job_name),
+            poll,
+        )
+        return
+
     initial_logs_batch = get_log_events_for_inference_recommender(
         cloudwatch_client, log_group_name, log_stream_name
     )
@@ -8531,6 +8553,11 @@ def _logs_for_job(  # noqa: C901 - suppress complexity warning for this method
     instance_count, stream_names, positions, client, log_group, dot, color_wrap = _logs_init(
         sagemaker_session.boto_session, description, job="Training"
     )
+
+    if not _has_log_group_permissions(client, log_group):
+        if wait:
+            return sagemaker_session.wait_for_job(job_name)
+        return
 
     state = _get_initial_job_state(description, "TrainingJobStatus", wait)
 
@@ -8807,6 +8834,30 @@ def _has_permission_for_live_logging(boto_session, endpoint_name) -> bool:
                 e,
             )
 
+            return False
+        return True
+
+
+def _has_log_group_permissions(logs_client, log_group):
+    """Validate if the current role has the right permission to access logs from CloudWatch"""
+    try:
+        response = logs_client.describe_log_streams(logGroupName=log_group, limit=1)
+
+        # Get the streams list or empty list if not present
+        streams = response.get("logStreams", [])
+
+        # Use the first stream name if available, otherwise use dummy-stream
+        stream_name = streams[0].get("logStreamName") if streams else "dummy-stream"
+
+        logs_client.get_log_events(logGroupName=log_group, logStreamName=stream_name, limit=1)
+        return True
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "AccessDeniedException":
+            logger.warning(
+                f"CloudWatch Logs permissions are not available to enable live logging: IAM role does not have "
+                f"the required permissions to access {log_group}."
+            )
             return False
         return True
 

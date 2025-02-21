@@ -32,6 +32,8 @@ from sagemaker import TrainingInput, Session, get_execution_role, exceptions
 from sagemaker.async_inference import AsyncInferenceConfig
 from sagemaker.explainer import ExplainerConfig
 from sagemaker.session import (
+    _display_inference_recommendations_job_steps_status,
+    _has_log_group_permissions,
     _tuning_job_status,
     _transform_job_status,
     _train_done,
@@ -2550,7 +2552,8 @@ def sagemaker_session_full_lifecycle(boto_session_full_lifecycle):
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_job_no_wait(cw, sagemaker_session_complete):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_job_no_wait(mock_has_log_group_permissions, cw, sagemaker_session_complete):
     ims = sagemaker_session_complete
     ims.logs_for_job(JOB_NAME)
     ims.sagemaker_client.describe_training_job.assert_called_once_with(TrainingJobName=JOB_NAME)
@@ -2558,7 +2561,10 @@ def test_logs_for_job_no_wait(cw, sagemaker_session_complete):
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_job_no_wait_stopped_job(cw, sagemaker_session_stopped):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_job_no_wait_stopped_job(
+    mock_has_log_group_permissions, cw, sagemaker_session_stopped
+):
     ims = sagemaker_session_stopped
     ims.logs_for_job(JOB_NAME)
     ims.sagemaker_client.describe_training_job.assert_called_once_with(TrainingJobName=JOB_NAME)
@@ -2566,7 +2572,10 @@ def test_logs_for_job_no_wait_stopped_job(cw, sagemaker_session_stopped):
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_job_wait_on_completed(cw, sagemaker_session_complete):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_job_wait_on_completed(
+    mock_has_log_group_permissions, cw, sagemaker_session_complete
+):
     ims = sagemaker_session_complete
     ims.logs_for_job(JOB_NAME, wait=True, poll=0)
     assert ims.sagemaker_client.describe_training_job.call_args_list == [
@@ -2576,7 +2585,10 @@ def test_logs_for_job_wait_on_completed(cw, sagemaker_session_complete):
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_job_wait_on_stopped(cw, sagemaker_session_stopped):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_job_wait_on_stopped(
+    mock_has_log_group_permissions, cw, sagemaker_session_stopped
+):
     ims = sagemaker_session_stopped
     ims.logs_for_job(JOB_NAME, wait=True, poll=0)
     assert ims.sagemaker_client.describe_training_job.call_args_list == [
@@ -2586,7 +2598,10 @@ def test_logs_for_job_wait_on_stopped(cw, sagemaker_session_stopped):
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_job_no_wait_on_running(cw, sagemaker_session_ready_lifecycle):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_job_no_wait_on_running(
+    mock_has_log_group_permissions, cw, sagemaker_session_ready_lifecycle
+):
     ims = sagemaker_session_ready_lifecycle
     ims.logs_for_job(JOB_NAME)
     assert ims.sagemaker_client.describe_training_job.call_args_list == [
@@ -2596,8 +2611,30 @@ def test_logs_for_job_no_wait_on_running(cw, sagemaker_session_ready_lifecycle):
 
 
 @patch("sagemaker.logs.ColorWrap")
+def test_logs_for_job_no_permission(cw, sagemaker_session):
+    """Test logs_for_job when CloudWatch Logs permissions are not available."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.side_effect = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "User is not authorized"}},
+        "DescribeLogStreams",
+    )
+    sagemaker_session.boto_session.client = MagicMock(return_value=logs_client)
+    sagemaker_session.sagemaker_client = MagicMock()
+
+    sagemaker_session.logs_for_job("training-job-name")
+
+    sagemaker_session.sagemaker_client.describe_training_job.assert_called_once_with(
+        TrainingJobName="training-job-name"
+    )
+    assert not cw().call_args_list
+
+
+@patch("sagemaker.logs.ColorWrap")
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
 @patch("time.time", side_effect=[0, 30, 60, 90, 120, 150, 180])
-def test_logs_for_job_full_lifecycle(time, cw, sagemaker_session_full_lifecycle):
+def test_logs_for_job_full_lifecycle(
+    time, mock_has_log_group_permissions, cw, sagemaker_session_full_lifecycle
+):
     ims = sagemaker_session_full_lifecycle
     ims.logs_for_job(JOB_NAME, wait=True, poll=0)
     assert (
@@ -2613,7 +2650,10 @@ def test_logs_for_job_full_lifecycle(time, cw, sagemaker_session_full_lifecycle)
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_transform_job_no_wait(cw, sagemaker_session_complete):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_transform_job_no_wait(
+    mock_has_log_group_permissions, cw, sagemaker_session_complete
+):
     ims = sagemaker_session_complete
     ims.logs_for_transform_job(JOB_NAME)
     ims.sagemaker_client.describe_transform_job.assert_called_once_with(TransformJobName=JOB_NAME)
@@ -2621,7 +2661,10 @@ def test_logs_for_transform_job_no_wait(cw, sagemaker_session_complete):
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_transform_job_no_wait_stopped_job(cw, sagemaker_session_stopped):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_transform_job_no_wait_stopped_job(
+    mock_has_log_group_permissions, cw, sagemaker_session_stopped
+):
     ims = sagemaker_session_stopped
     ims.logs_for_transform_job(JOB_NAME)
     ims.sagemaker_client.describe_transform_job.assert_called_once_with(TransformJobName=JOB_NAME)
@@ -2629,7 +2672,10 @@ def test_logs_for_transform_job_no_wait_stopped_job(cw, sagemaker_session_stoppe
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_transform_job_wait_on_completed(cw, sagemaker_session_complete):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_transform_job_wait_on_completed(
+    mock_has_log_group_permissions, cw, sagemaker_session_complete
+):
     ims = sagemaker_session_complete
     ims.logs_for_transform_job(JOB_NAME, wait=True, poll=0)
     assert ims.sagemaker_client.describe_transform_job.call_args_list == [
@@ -2639,7 +2685,10 @@ def test_logs_for_transform_job_wait_on_completed(cw, sagemaker_session_complete
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_transform_job_wait_on_stopped(cw, sagemaker_session_stopped):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_transform_job_wait_on_stopped(
+    mock_has_log_group_permissions, cw, sagemaker_session_stopped
+):
     ims = sagemaker_session_stopped
     ims.logs_for_transform_job(JOB_NAME, wait=True, poll=0)
     assert ims.sagemaker_client.describe_transform_job.call_args_list == [
@@ -2649,7 +2698,10 @@ def test_logs_for_transform_job_wait_on_stopped(cw, sagemaker_session_stopped):
 
 
 @patch("sagemaker.logs.ColorWrap")
-def test_logs_for_transform_job_no_wait_on_running(cw, sagemaker_session_ready_lifecycle):
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
+def test_logs_for_transform_job_no_wait_on_running(
+    mock_has_log_group_permissions, cw, sagemaker_session_ready_lifecycle
+):
     ims = sagemaker_session_ready_lifecycle
     ims.logs_for_transform_job(JOB_NAME)
     assert ims.sagemaker_client.describe_transform_job.call_args_list == [
@@ -2659,8 +2711,30 @@ def test_logs_for_transform_job_no_wait_on_running(cw, sagemaker_session_ready_l
 
 
 @patch("sagemaker.logs.ColorWrap")
+def test_logs_for_transform_job_no_permission(cw, sagemaker_session):
+    """Test logs_for_transform_job when CloudWatch Logs permissions are not available."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.side_effect = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "User is not authorized"}},
+        "DescribeLogStreams",
+    )
+    sagemaker_session.boto_session.client = MagicMock(return_value=logs_client)
+    sagemaker_session.sagemaker_client = MagicMock()
+
+    sagemaker_session.logs_for_transform_job("transform-job-name")
+
+    sagemaker_session.sagemaker_client.describe_transform_job.assert_called_once_with(
+        TransformJobName="transform-job-name"
+    )
+    assert not cw().call_args_list
+
+
+@patch("sagemaker.logs.ColorWrap")
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
 @patch("time.time", side_effect=[0, 30, 60, 90, 120, 150, 180])
-def test_logs_for_transform_job_full_lifecycle(time, cw, sagemaker_session_full_lifecycle):
+def test_logs_for_transform_job_full_lifecycle(
+    time, mock_has_log_group_permissions, cw, sagemaker_session_full_lifecycle
+):
     ims = sagemaker_session_full_lifecycle
     ims.logs_for_transform_job(JOB_NAME, wait=True, poll=0)
     assert (
@@ -2673,6 +2747,75 @@ def test_logs_for_transform_job_full_lifecycle(time, cw, sagemaker_session_full_
         call(0, "hi there #2a"),
         call(0, "hi there #3"),
     ]
+
+
+@patch("sagemaker.logs.ColorWrap")
+def test_logs_for_processing_job_no_permission(cw, sagemaker_session):
+    """Test logs_for_processing_job when CloudWatch Logs permissions are not available."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.side_effect = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "User is not authorized"}},
+        "DescribeLogStreams",
+    )
+    sagemaker_session.boto_session.client = MagicMock(return_value=logs_client)
+    sagemaker_session.sagemaker_client = MagicMock()
+
+    sagemaker_session.logs_for_processing_job("processing-job-name")
+
+    sagemaker_session.sagemaker_client.describe_processing_job.assert_called_once_with(
+        ProcessingJobName="processing-job-name"
+    )
+    assert not cw().call_args_list
+
+
+@patch("sagemaker.logs.ColorWrap")
+def test_logs_for_auto_ml_job_no_permission(cw, sagemaker_session):
+    """Test logs_for_auto_ml_job when CloudWatch Logs permissions are not available."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.side_effect = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "User is not authorized"}},
+        "DescribeLogStreams",
+    )
+
+    sagemaker_client = MagicMock()
+    sagemaker_client.describe_auto_ml_job_v2.return_value = {
+        "AutoMLJobStatus": "Completed",
+        "AutoMLJobName": "automl-job-name",
+        "BestCandidate": {},
+    }
+
+    sagemaker_session.boto_session.client = MagicMock()
+    sagemaker_session.boto_session.client.side_effect = lambda service, **kwargs: {
+        "logs": logs_client,
+        "sagemaker": sagemaker_client,
+    }[service]
+    sagemaker_session.sagemaker_client = sagemaker_client
+
+    sagemaker_session.logs_for_auto_ml_job("automl-job-name")
+
+    sagemaker_client.describe_auto_ml_job_v2.assert_called_once_with(
+        AutoMLJobName="automl-job-name"
+    )
+    assert not cw().call_args_list
+
+
+def test_display_inference_recommendations_job_steps_status_no_permission(sagemaker_session):
+    """Test _display_inference_recommendations_job_steps_status when CloudWatch Logs permissions are not available."""
+    sagemaker_client = MagicMock()
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.side_effect = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "User is not authorized"}},
+        "DescribeLogStreams",
+    )
+    sagemaker_session.boto_session.client = MagicMock(return_value=logs_client)
+
+    _display_inference_recommendations_job_steps_status(
+        sagemaker_session, sagemaker_client, "job-name"
+    )
+
+    sagemaker_client.describe_inference_recommendations_job.assert_called_once_with(
+        JobName="job-name"
+    )
 
 
 MODEL_NAME = "some-model"
@@ -6401,9 +6544,10 @@ def test_wait_for_inference_recommendations_job_failed(sagemaker_session):
 
 
 @patch("builtins.print")
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
 @patch("time.sleep")
 def test_wait_for_inference_recommendations_job_completed_verbose(
-    sleep, mock_print, sm_session_inference_recommender
+    sleep, mock_has_log_group_permissions, mock_print, sm_session_inference_recommender
 ):
     assert (
         sm_session_inference_recommender.wait_for_inference_recommendations_job(
@@ -6427,9 +6571,10 @@ def test_wait_for_inference_recommendations_job_completed_verbose(
 
 
 @patch("builtins.print")
+@patch("sagemaker.session._has_log_group_permissions", return_value=True)
 @patch("time.sleep")
 def test_wait_for_inference_recommendations_job_flush_completed(
-    sleep, mock_print, sm_session_inference_recommender_flush
+    sleep, mock_has_log_group_permissions, mock_print, sm_session_inference_recommender_flush
 ):
     assert (
         sm_session_inference_recommender_flush.wait_for_inference_recommendations_job(
@@ -7183,3 +7328,105 @@ def test_delete_hub_content_reference(sagemaker_session):
     }
 
     sagemaker_session.sagemaker_client.delete_hub_content_reference.assert_called_with(**request)
+
+
+def test_has_log_group_permissions_success():
+    """Test _has_log_group_permissions when access is allowed for both operations."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.return_value = {
+        "logStreams": [{"logStreamName": "test-stream"}]
+    }
+    logs_client.get_log_events.return_value = {"events": []}
+    log_group = "/aws/sagemaker/test-group"
+
+    result = _has_log_group_permissions(logs_client, log_group)
+
+    assert result is True
+    logs_client.describe_log_streams.assert_called_once_with(logGroupName=log_group, limit=1)
+    logs_client.get_log_events.assert_called_once_with(
+        logGroupName=log_group, logStreamName="test-stream", limit=1
+    )
+
+
+def test_has_log_group_permissions_success_no_streams():
+    """Test _has_log_group_permissions when access is allowed but no streams exist."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.return_value = {"logStreams": []}
+    logs_client.get_log_events.return_value = {"events": []}
+    log_group = "/aws/sagemaker/test-group"
+
+    result = _has_log_group_permissions(logs_client, log_group)
+
+    assert result is True
+    logs_client.describe_log_streams.assert_called_once_with(logGroupName=log_group, limit=1)
+    logs_client.get_log_events.assert_called_once_with(
+        logGroupName=log_group, logStreamName="dummy-stream", limit=1
+    )
+
+
+def test_has_log_group_permissions_describe_log_streams_denied():
+    """Test _has_log_group_permissions when describe_log_streams access is denied."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.side_effect = ClientError(
+        {
+            "Error": {
+                "Code": "AccessDeniedException",
+                "Message": "User is not authorized to perform logs:DescribeLogStreams",
+            }
+        },
+        "DescribeLogStreams",
+    )
+    log_group = "/aws/sagemaker/test-group"
+
+    result = _has_log_group_permissions(logs_client, log_group)
+
+    assert result is False
+    logs_client.describe_log_streams.assert_called_once_with(logGroupName=log_group, limit=1)
+    logs_client.get_log_events.assert_not_called()
+
+
+def test_has_log_group_permissions_get_log_events_denied():
+    """Test _has_log_group_permissions when get_log_events access is denied."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.return_value = {
+        "logStreams": [{"logStreamName": "test-stream"}]
+    }
+    logs_client.get_log_events.side_effect = ClientError(
+        {
+            "Error": {
+                "Code": "AccessDeniedException",
+                "Message": "User is not authorized to perform logs:GetLogEvents",
+            }
+        },
+        "GetLogEvents",
+    )
+    log_group = "/aws/sagemaker/test-group"
+
+    result = _has_log_group_permissions(logs_client, log_group)
+
+    assert result is False
+    logs_client.describe_log_streams.assert_called_once_with(logGroupName=log_group, limit=1)
+    logs_client.get_log_events.assert_called_once_with(
+        logGroupName=log_group, logStreamName="test-stream", limit=1
+    )
+
+
+def test_has_log_group_permissions_resource_not_found():
+    """Test _has_log_group_permissions when log group doesn't exist."""
+    logs_client = MagicMock()
+    logs_client.describe_log_streams.side_effect = ClientError(
+        {
+            "Error": {
+                "Code": "ResourceNotFoundException",
+                "Message": "The specified log group does not exist",
+            }
+        },
+        "DescribeLogStreams",
+    )
+    log_group = "/aws/sagemaker/test-group"
+
+    result = _has_log_group_permissions(logs_client, log_group)
+
+    assert result is True
+    logs_client.describe_log_streams.assert_called_once_with(logGroupName=log_group, limit=1)
+    logs_client.get_log_events.assert_not_called()
